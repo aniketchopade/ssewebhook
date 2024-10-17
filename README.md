@@ -28,3 +28,7 @@ Example: http://localhost:8080/api/subscribe/webhooksse/{id}
 This endpoint sends a response to the SSE connection established by the corresponding /webhooksse/{id} request. Replace {id} with the same unique identifier used in the /webhooksse/{id} endpoint.
 
 Example: http://localhost:8080/api/subscribe/response/{id}?message=Hello%20World
+
+
+6. Automatically remove old eventlinks. Example here-
+[cleanup.png]
