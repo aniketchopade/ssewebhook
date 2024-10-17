@@ -1,5 +1,7 @@
 package com.example.demo;
 
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -17,11 +19,11 @@ import javax.ws.rs.core.Response;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.lang.ref.WeakReference;
-import java.util.Collections;
-import java.util.Map;
-import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
 
 @Path("/subscribe")
 public class SseResource {
@@ -29,16 +31,51 @@ public class SseResource {
     @Context
     private Sse sse;
 
-    private static final Map<String, WeakReference<SseEventSink>> eventSinks = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final ConcurrentHashMap<String, SseEventSink> eventSinks = new ConcurrentHashMap<>();
+    private ScheduledExecutorService cleanupExecutor;
+    private static final Logger logger = Logger.getLogger(SseResource.class.getName());
+
+    @PostConstruct
+    public void init() {
+        cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
+        cleanupExecutor.scheduleAtFixedRate(this::cleanupEventSinks, 1, 1, TimeUnit.MINUTES);
+    }
+
+    @PreDestroy
+    public void destroy() {
+        if (cleanupExecutor != null && !cleanupExecutor.isShutdown()) {
+            cleanupExecutor.shutdown();
+        }
+    }
 
     @GET
+    @Path("/webhooksse/{id}")
     @Produces(MediaType.SERVER_SENT_EVENTS)
-    public void subscribe(@Context SseEventSink eventSink) {
+    public void webhookSse(@PathParam("id") String id, @Context SseEventSink eventSink) {
+        eventSinks.put(id, eventSink);
+    }
+
+    @GET
+    @Path("/response/{id}")
+    public void sendResponse(@PathParam("id") String id, @QueryParam("message") String message) {
+        SseEventSink eventSink = eventSinks.get(id);
+        if (eventSink != null) {
+            eventSink.send(sse.newEvent(message));
+            eventSink.close();
+            eventSinks.remove(id);
+        }
+    }
+
+    @GET
+    @Path("/advertise")
+    @Produces(MediaType.SERVER_SENT_EVENTS)
+    public void advertise(@Context SseEventSink eventSink) {
         new Thread(() -> {
             try (SseEventSink sink = eventSink) {
-                for (int i = 0; i < 10; i++) {
-                    sink.send(sse.newEvent("Event " + i));
-                    TimeUnit.SECONDS.sleep(1);
+                while (!sink.isClosed()) {
+                    int size = eventSinks.size();
+                    sink.send(sse.newEvent("Current map size: " + size));
+                    TimeUnit.SECONDS.sleep(10);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -46,50 +83,14 @@ public class SseResource {
         }).start();
     }
 
-    @GET
-    @Path("/weather")
-    @Produces(MediaType.SERVER_SENT_EVENTS)
-    public void getWeather(@QueryParam("zip") String zip, @Context SseEventSink eventSink) {
-        new Thread(() -> {
-            Client client = ClientBuilder.newClient();
-            WebTarget target = client.target("http://api.openweathermap.org/data/2.5/weather")
-                                     .queryParam("zip", zip)
-                                     .queryParam("appid", "0bceea881cef1f9016e7f602491af2e0"); // Replace with your actual API key
-
-            try (SseEventSink sink = eventSink) {
-                Response response = target.request(MediaType.APPLICATION_JSON).get();
-                if (response.getStatus() == 200) {
-                    String jsonResponse = response.readEntity(String.class);
-                    ObjectMapper mapper = new ObjectMapper();
-                    JsonNode jsonNode = mapper.readTree(jsonResponse);
-                    sink.send(sse.newEvent(jsonNode.toString()));
-                } else {
-                    sink.send(sse.newEvent("Error: Unable to fetch weather data"));
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }).start();
-    }
-
-    @GET
-    @Path("/webhooksse/{id}")
-    @Produces(MediaType.SERVER_SENT_EVENTS)
-    public void webhookSse(@PathParam("id") String id, @Context SseEventSink eventSink) {
-        eventSinks.put(id, new WeakReference<>(eventSink));
-    }
-
-    @GET
-    @Path("/response/{id}")
-    public void sendResponse(@PathParam("id") String id, @QueryParam("message") String message) {
-        WeakReference<SseEventSink> weakRef = eventSinks.get(id);
-        if (weakRef != null) {
-            SseEventSink eventSink = weakRef.get();
-            if (eventSink != null) {
-                eventSink.send(sse.newEvent(message));
-                eventSink.close();
+    private void cleanupEventSinks() {
+        eventSinks.forEach((id, sink) -> {
+            if (sink.isClosed()) {
+                logger.info("Removing closed SseEventSink with id: " + id);
                 eventSinks.remove(id);
+            } else {
+                logger.info("SseEventSink with id: " + id + " is still open.");
             }
-        }
+        });
     }
 }
