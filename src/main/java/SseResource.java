@@ -12,18 +12,16 @@ import javax.ws.rs.sse.Sse;
 import javax.ws.rs.sse.SseEventSink;
 import javax.ws.rs.sse.SseEvent;
 import javax.ws.rs.core.Context;
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.client.WebTarget;
-import javax.ws.rs.core.Response;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
+import java.util.Locale;
 
 @Path("/subscribe")
 public class SseResource {
@@ -31,7 +29,7 @@ public class SseResource {
     @Context
     private Sse sse;
 
-    private static final ConcurrentHashMap<String, SseEventSink> eventSinks = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, EventSinkWrapper> eventSinks = new ConcurrentHashMap<>();
     private ScheduledExecutorService cleanupExecutor;
     private static final Logger logger = Logger.getLogger(SseResource.class.getName());
 
@@ -52,14 +50,15 @@ public class SseResource {
     @Path("/webhooksse/{id}")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     public void webhookSse(@PathParam("id") String id, @Context SseEventSink eventSink) {
-        eventSinks.put(id, eventSink);
+        eventSinks.put(id, new EventSinkWrapper(eventSink));
     }
 
     @GET
     @Path("/response/{id}")
     public void sendResponse(@PathParam("id") String id, @QueryParam("message") String message) {
-        SseEventSink eventSink = eventSinks.get(id);
-        if (eventSink != null) {
+        EventSinkWrapper wrapper = eventSinks.get(id);
+        if (wrapper != null) {
+            SseEventSink eventSink = wrapper.getEventSink();
             eventSink.send(sse.newEvent(message));
             eventSink.close();
             eventSinks.remove(id);
@@ -72,9 +71,18 @@ public class SseResource {
     public void advertise(@Context SseEventSink eventSink) {
         new Thread(() -> {
             try (SseEventSink sink = eventSink) {
+                DateTimeFormatter formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
+                                                               .withLocale(Locale.getDefault())
+                                                               .withZone(ZoneId.systemDefault());
                 while (!sink.isClosed()) {
-                    int size = eventSinks.size();
-                    sink.send(sse.newEvent("Current map size: " + size));
+                    StringBuilder message = new StringBuilder("Current map size: " + eventSinks.size() + "\n");
+                    eventSinks.forEach((id, wrapper) -> {
+                        String formattedTimestamp = formatter.format(Instant.ofEpochMilli(wrapper.getTimestamp()));
+                        message.append("ID: ").append(id)
+                               .append(", Timestamp: ").append(formattedTimestamp)
+                               .append("\n");
+                    });
+                    sink.send(sse.newEvent(message.toString()));
                     TimeUnit.SECONDS.sleep(10);
                 }
             } catch (InterruptedException e) {
@@ -84,9 +92,12 @@ public class SseResource {
     }
 
     private void cleanupEventSinks() {
-        eventSinks.forEach((id, sink) -> {
-            if (sink.isClosed()) {
-                logger.info("Removing closed SseEventSink with id: " + id);
+        long currentTime = System.currentTimeMillis();
+        eventSinks.forEach((id, wrapper) -> {
+            SseEventSink sink = wrapper.getEventSink();
+            if (sink.isClosed() || (currentTime - wrapper.getTimestamp()) > TimeUnit.MINUTES.toMillis(1)) {
+                logger.info("Removing closed or old SseEventSink with id: " + id);
+                sink.close();
                 eventSinks.remove(id);
             } else {
                 logger.info("SseEventSink with id: " + id + " is still open.");

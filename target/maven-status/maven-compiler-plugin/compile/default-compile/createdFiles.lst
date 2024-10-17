@@ -1,3 +1,4 @@
 com\example\demo\SseResource.class
-com\example\demo\HelloWorldServlet.class
 com\example\demo\HelloWorldResource.class
+com\example\demo\HelloWorldServlet.class
+com\example\demo\EventSinkWrapper.class
