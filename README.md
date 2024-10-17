@@ -22,9 +22,9 @@ This project demonstrates the use of Server-Sent Events (SSE) with JAX-RS and Je
 4. /subscribe/webhooksse/{id}
 This endpoint sets up an SSE connection. Replace {id} with a unique identifier.
 
-Example: http://localhost:8080/api/subscribe/webhooksse/123
+Example: http://localhost:8080/api/subscribe/webhooksse/{id}
 
 5. /subscribe/response/{id}
 This endpoint sends a response to the SSE connection established by the corresponding /webhooksse/{id} request. Replace {id} with the same unique identifier used in the /webhooksse/{id} endpoint.
 
-Example: http://localhost:8080/api/subscribe/response/123?message=Hello%20World
+Example: http://localhost:8080/api/subscribe/response/{id}?message=Hello%20World
