@@ -8,8 +8,12 @@ import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.sse.OutboundSseEvent;
 import javax.ws.rs.sse.Sse;
 import javax.ws.rs.sse.SseEventSink;
+
+import org.glassfish.jersey.media.sse.OutboundEvent;
+
 import javax.ws.rs.sse.SseEvent;
 import javax.ws.rs.core.Context;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,6 +26,8 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
 import java.util.Locale;
+import java.util.Iterator;
+import java.util.Map;
 
 @Path("/subscribe")
 public class SseResource {
@@ -59,7 +65,11 @@ public class SseResource {
         EventSinkWrapper wrapper = eventSinks.get(id);
         if (wrapper != null) {
             SseEventSink eventSink = wrapper.getEventSink();
-            eventSink.send(sse.newEvent(message));
+            OutboundSseEvent event = sse.newEventBuilder()
+                                .name("response")
+                                .data(message)
+                                .build();
+            eventSink.send(event);
             eventSink.close();
             eventSinks.remove(id);
         }
@@ -94,14 +104,17 @@ public class SseResource {
     private void cleanupEventSinks() {
         long currentTime = System.currentTimeMillis();
         eventSinks.forEach((id, wrapper) -> {
-            SseEventSink sink = wrapper.getEventSink();
-            if (sink.isClosed() || (currentTime - wrapper.getTimestamp()) > TimeUnit.MINUTES.toMillis(1)) {
-                logger.info("Removing closed or old SseEventSink with id: " + id);
-                sink.close();
-                eventSinks.remove(id);
-            } else {
-                logger.info("SseEventSink with id: " + id + " is still open.");
-            }
+            eventSinks.computeIfPresent(id, (key, value) -> {
+                SseEventSink sink = value.getEventSink();
+                if (sink.isClosed() || (currentTime - value.getTimestamp()) > TimeUnit.MINUTES.toMillis(1)) {
+                    logger.info("Removing closed or old SseEventSink with id: " + id);
+                    sink.close();
+                    return null; // Returning null removes the entry
+                } else {
+                    logger.info("SseEventSink with id: " + id + " is still open.");
+                    return value;
+                }
+            });
         });
     }
 }
