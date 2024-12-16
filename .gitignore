@@ -1,2 +1,4 @@
 # Ignore target directory
 target/
+*.jar
+.gradle/

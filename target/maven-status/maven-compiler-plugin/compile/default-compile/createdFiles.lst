@@ -1,4 +1,8 @@
-com\example\demo\SseResource.class
+com\example\demo\RedisSubscriber$1.class
 com\example\demo\HelloWorldResource.class
 com\example\demo\HelloWorldServlet.class
+com\example\demo\SseResource.class
+com\example\demo\CorsFilter.class
+com\example\demo\RedisSubscriber.class
+com\example\demo\ApplicationConfig.class
 com\example\demo\EventSinkWrapper.class
